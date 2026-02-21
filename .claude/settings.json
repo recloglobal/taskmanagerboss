@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'File edited. Remember to restart bot if needed: docker-compose restart bot'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
