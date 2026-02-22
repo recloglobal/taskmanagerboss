@@ -26,6 +26,10 @@ async def group_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if TOPIC_GENERAL and message.message_thread_id != TOPIC_GENERAL:
         return
 
+    # Skip if the message contains any bot command (handles /cmd and @bot /cmd formats)
+    if message.entities and any(e.type == "bot_command" for e in message.entities):
+        return
+
     task_text = message.text
     group_id = message.chat_id
 

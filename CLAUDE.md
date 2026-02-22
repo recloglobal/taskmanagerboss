@@ -6,17 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Telegram bot ("TaskManagerBoss") that acts like a strict boss for personal task management.
 - Reads tasks posted in a Telegram group's `#general` topic
-- Classifies them with Gemini 2.5 Flash AI into categories: `work`, `personal`, `health`, `other`
+- Classifies them with AI into categories: `work`, `personal`, `health`, `other`
 - Routes each task into the matching group topic
 - Sends escalating reminders until tasks are marked done
-- Private chat mode: full Gemini AI assistant in Uzbek/English
+- Private chat mode: full AI assistant with boss personality in Uzbek/English
 
 Full spec: `TASKMANAGERBOSS_SPEC.md` | Claude Code setup guide: `CLAUDE_CODE_SETUP.md`
 
 ## Stack
 
 - Python 3.11, python-telegram-bot v21 (async)
-- Gemini 2.5 Flash via `google-generativeai` (free tier: 10 RPM / 250 RPD)
+- **OpenRouter** via `openai` client library (free-tier models with fallback chain): llama-3.3-70b → llama-4-scout → deepseek-r1 → gemma-3n → hermes-3-405b
 - PostgreSQL 16, SQLAlchemy 2.0 async (`asyncpg`), Alembic migrations
 - APScheduler 3.x (`AsyncIOScheduler` — required for async bot)
 - Docker + docker-compose (development and DigitalOcean deployment)
@@ -55,7 +55,8 @@ app/main.py          ← Entry point: registers all handlers, starts scheduler
 app/config.py        ← All env vars (import from here, never os.getenv() in handlers)
 app/database.py      ← SQLAlchemy async engine + SessionLocal
 app/models.py        ← Task ORM model
-app/ai.py            ← All Gemini calls: classify_task(), generate_reminder(), chat()
+app/ai.py            ← All AI calls via OpenRouter: classify_task(), generate_reminder(),
+                       generate_done_response(), generate_why_response(), chat(), clear_history()
 app/scheduler.py     ← APScheduler reminder engine (runs every 60 min)
 app/handlers/
   start.py           ← /start command (private chat welcome)
@@ -68,43 +69,52 @@ alembic/             ← DB migrations (run inside container only)
 
 **Request flow (group task):** User posts in `#general` → `group.py` filters by `OWNER_ID` + `TOPIC_GENERAL` → `classify_task()` in `ai.py` → saves `Task` to DB → posts to destination topic with inline buttons.
 
-**Reminder flow:** Scheduler runs `send_reminders()` every 60 min → queries all `pending` tasks → calls `generate_reminder()` → tone escalates via `overdue_count` (0=firm, 1-2=sarcastic, 3+=aggressive boss).
+**Reminder logic:** Scheduler runs every 60 min → queries all `pending` tasks:
+- Tasks **with** due date: remind 1 day before due
+- Tasks **without** due date: remind every 48 hours after last reminder
+- `overdue_count` drives tone escalation: 0=firm, 1=impatient, 2=sarcastic, 3+=aggressive caps
 
-**Conversation history** for private chat is stored in-memory in `ai.py::_histories` dict — lost on restart.
+**AI fallback chain:** `ai.py::_call()` and `_chat_call()` try each model in `MODELS` list in order. On any failure, waits 2 seconds and tries the next. All synchronous AI calls are wrapped in `asyncio.to_thread()` to avoid blocking the event loop.
+
+**Conversation history** for private chat is stored in `ai.py::_histories` dict (last 20 turns kept, last 10 sent to model) — lost on restart.
+
+**Snooze flow:** Pressing ❌ sets `context.user_data["pending_notyet_task_id"]` → `reason_message_handler` in `callbacks.py` picks it up (handler group=1, before `private_message_handler` in group=2).
 
 ## Critical Rules
 
 - **All DB calls must be async:** `async with SessionLocal() as session:`
-- **Never run Alembic outside the bot container** — it needs container's Python path and env
-- **Never call Gemini in loops** — rate limit is 10 RPM; one call per user action max
-- **Topics cannot be created via the API** — they must be pre-created in Telegram, then IDs captured via `/topics` command
-- **Bot must be group admin** with Send Messages permission
+- **Never run Alembic outside the bot container** — it needs the container's Python path and env
+- **All AI calls must go through `app/ai.py`** — never call OpenRouter directly from handlers
+- **Wrap all AI calls in `asyncio.to_thread()`** — they are synchronous and will block the event loop
 - **`AsyncIOScheduler`** (not `BackgroundScheduler`) is required because the bot is async
-- Handler registration order in `main.py` matters — callbacks before group/private filters
+- **Handler registration order in `main.py` matters** — callbacks before group/private filters; `reason_message_handler` (group=1) before `private_message_handler` (group=2)
+- **Topics cannot be created via the API** — pre-create them in Telegram, then get IDs via `/topics`
+- **Bot must be group admin** with Send Messages permission
+- **`DATABASE_URL_SYNC`** exists in `config.py` for Alembic (uses `psycopg2`, not `asyncpg`)
 
 ## Environment Variables
 
 See `.env.example` for all required vars. Key ones:
-- `BOT_TOKEN`, `GEMINI_API_KEY`, `OWNER_ID`
+- `BOT_TOKEN`, `OPENROUTER_API_KEY`, `OWNER_ID`
 - `TOPIC_GENERAL`, `TOPIC_WORK`, `TOPIC_PERSONAL`, `TOPIC_HEALTH`, `TOPIC_OTHER` — get these by running `/topics` inside each group topic after bot starts
-- `DATABASE_URL` is constructed in `config.py` from the `POSTGRES_*` vars
+- `DATABASE_URL` is constructed in `config.py` from the `POSTGRES_*` vars (never set `DATABASE_URL` directly in `.env`)
 
 ## Current Build Status
 
 - [x] Step 1 — Docker + postgres + `/start` working
-- [x] Step 2 — `config.py`, `database.py`, `models.py` written; **run migration next** (see commands above)
-- [x] Step 3 — `ai.py` complete (classify, remind, chat, done/why responses)
-- [x] Step 4 — `handlers/topics.py` written; **run `/topics` in each group topic to get IDs, then fill `.env`**
+- [x] Step 2 — `config.py`, `database.py`, `models.py` written; migration ready
+- [x] Step 3 — `ai.py` complete (classify, remind, done/why responses, multi-turn chat via OpenRouter)
+- [x] Step 4 — `handlers/topics.py` written
 - [x] Step 5 — `handlers/group.py` complete (task routing)
 - [x] Step 6 — `handlers/callbacks.py` complete (✅/❌ buttons + snooze reason)
-- [x] Step 7 — `scheduler.py` complete (escalating reminders every 60 min)
+- [x] Step 7 — `scheduler.py` complete (escalating reminders)
 - [x] Step 8 — `handlers/private.py` complete (AI chat in Uzbek/English)
 - [ ] Step 9 — Deploy to DigitalOcean
 
-## Next Steps Before Bot Works
+## Setup Sequence (first run)
 
-1. Build containers: `docker-compose up --build`
-2. Run the Alembic migration inside container:
+1. `docker-compose up --build`
+2. Run migration inside container:
    ```bash
    docker-compose exec bot bash
    alembic revision --autogenerate -m "create tasks table"
@@ -112,4 +122,4 @@ See `.env.example` for all required vars. Key ones:
    exit
    ```
 3. Run `/topics` inside each Telegram group topic → copy IDs into `.env`
-4. Restart bot: `docker-compose restart bot`
+4. `docker-compose restart bot`

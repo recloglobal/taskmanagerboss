@@ -2,23 +2,16 @@ import json
 import re
 import time
 import logging
-from openai import OpenAI
-from config import OPENROUTER_API_KEY
+import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
+from config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
 
-_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
+genai.configure(api_key=GEMINI_API_KEY)
 
-MODELS = [
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "meta-llama/llama-4-scout:free",
-    "deepseek/deepseek-r1-0528:free",
-    "google/gemma-3n-e4b-it:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
-]
+PRIMARY_MODEL = "gemini-2.0-flash-lite"
+FALLBACK_MODEL = "gemini-2.0-flash"
 
 CATEGORIES = ["work", "personal", "health", "other"]
 
@@ -39,7 +32,7 @@ You behave like a demanding but fair boss whose ONLY job is to keep the user pro
 - You are NOT a general-purpose chatbot. You are a TASK MANAGER.
 
 ## Your Rules
-1. ALWAYS respond in the SAME LANGUAGE the user writes in. If they write in Uzbek — reply in Uzbek. If English — reply in English. If mixed — use the dominant language.
+1. ALWAYS respond in the SAME LANGUAGE the user writes in. If they write in Uzbek — reply in Uzbek (NOT Russian, NOT English). If English — reply in English. If mixed — use the dominant language. IMPORTANT: Uzbek and Russian both use Cyrillic script but they are DIFFERENT languages. If the user writes in Uzbek, respond in Uzbek.
 2. Keep responses SHORT: 2-4 sentences max. No long paragraphs.
 3. NEVER go off-topic. If the user tries to chat about random things, redirect them back to their tasks.
 4. Use informal "sen" form in Uzbek (not "siz").
@@ -69,40 +62,49 @@ You behave like a demanding but fair boss whose ONLY job is to keep the user pro
 
 
 def _call(prompt: str) -> str:
-    """Call OpenRouter, trying each model in order with retry delay for rate limits."""
-    last_error = None
-    for i, model in enumerate(MODELS):
-        try:
-            response = _client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.warning(f"Model {model} failed: {e}")
-            last_error = e
-            # Brief pause before trying next model (helps with rate limits)
-            if i < len(MODELS) - 1:
-                time.sleep(2)
-    raise last_error
+    """Single-turn Gemini call with fallback and rate-limit retry."""
+    for model_name in [PRIMARY_MODEL, FALLBACK_MODEL]:
+        model = genai.GenerativeModel(model_name)
+        for attempt in range(2):
+            try:
+                response = model.generate_content(prompt)
+                return response.text.strip()
+            except google_exceptions.ResourceExhausted:
+                if attempt == 0:
+                    logger.warning(f"{model_name} rate limited, retrying in 35s...")
+                    time.sleep(35)
+                else:
+                    logger.warning(f"{model_name} still rate limited, trying fallback...")
+                    break
+            except Exception as e:
+                logger.warning(f"{model_name} failed: {e}")
+                break
+    raise RuntimeError("All Gemini models failed or rate limited")
 
 
-def _chat_call(messages: list[dict]) -> str:
-    """Multi-turn call with full message history, tries each model in order."""
-    last_error = None
-    for i, model in enumerate(MODELS):
-        try:
-            response = _client.chat.completions.create(
-                model=model,
-                messages=messages,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.warning(f"Model {model} failed: {e}")
-            last_error = e
-            if i < len(MODELS) - 1:
-                time.sleep(2)
-    raise last_error
+def _chat_call(history: list, message: str) -> str:
+    """Multi-turn Gemini chat call with system instruction, fallback and retry."""
+    for model_name in [PRIMARY_MODEL, FALLBACK_MODEL]:
+        model = genai.GenerativeModel(
+            model_name,
+            system_instruction=BOSS_SYSTEM_PROMPT,
+        )
+        for attempt in range(2):
+            try:
+                chat = model.start_chat(history=history)
+                response = chat.send_message(message)
+                return response.text.strip()
+            except google_exceptions.ResourceExhausted:
+                if attempt == 0:
+                    logger.warning(f"{model_name} rate limited, retrying in 35s...")
+                    time.sleep(35)
+                else:
+                    logger.warning(f"{model_name} still rate limited, trying fallback...")
+                    break
+            except Exception as e:
+                logger.warning(f"{model_name} failed: {e}")
+                break
+    raise RuntimeError("All Gemini models failed or rate limited")
 
 
 def classify_task(task_text: str) -> dict:
@@ -116,6 +118,7 @@ def classify_task(task_text: str) -> dict:
     prompt = f"""
 You are TaskManagerBoss, a strict task classifier. Analyze this task and return ONLY a JSON object.
 No explanation. No markdown fences. No extra text. ONLY the raw JSON.
+LANGUAGE NOTE: The task may be in Uzbek (not Russian) — Uzbek and Russian both use Cyrillic but are different languages.
 
 Task: "{task_text}"
 
@@ -163,7 +166,7 @@ def generate_reminder(task: dict) -> str:
     prompt = f"""
 You are TaskManagerBoss — a strict, no-nonsense task manager.
 Write a reminder message. Respond in the SAME language as the task text.
-If the task is in Uzbek, write in Uzbek (informal 'sen' form). If English, write in English.
+CRITICAL: If the task is in Uzbek, write in UZBEK (NOT Russian). Uzbek and Russian both use Cyrillic but are different languages. If English, write in English.
 
 Tone: {tone}
 Example of the tone: "{example}"
@@ -183,7 +186,7 @@ def generate_why_response(task: dict, reason: str) -> str:
     prompt = f"""
 You are TaskManagerBoss — a strict but fair boss.
 Respond in the SAME language as the task/reason text.
-If Uzbek, use informal 'sen' form. If English, be direct.
+CRITICAL: If Uzbek (Cyrillic but NOT Russian), use informal 'sen' form and respond in UZBEK. If English, be direct.
 
 The user hasn't completed this task: "{task['text']}"
 Their excuse: "{reason}"
@@ -203,7 +206,7 @@ def generate_done_response(task: dict) -> str:
     prompt = f"""
 You are TaskManagerBoss — a strict but fair boss.
 Respond in the SAME language as the task text.
-If Uzbek, use informal 'sen' form. If English, be direct.
+CRITICAL: If Uzbek (Cyrillic but NOT Russian), use informal 'sen' form and respond in UZBEK. If English, be direct.
 
 The user just completed: "{task['text']}"
 
@@ -221,13 +224,13 @@ def chat(user_id: int, message: str) -> str:
     """Multi-turn private chat conversation with boss personality."""
     history = _histories.setdefault(user_id, [])
 
-    messages = [{"role": "system", "content": BOSS_SYSTEM_PROMPT}]
+    # Build Gemini-format history (last 10 turns)
+    gemini_history = []
     for turn in history[-10:]:
-        messages.append({"role": "user", "content": turn["user"]})
-        messages.append({"role": "assistant", "content": turn["bot"]})
-    messages.append({"role": "user", "content": message})
+        gemini_history.append({"role": "user", "parts": [turn["user"]]})
+        gemini_history.append({"role": "model", "parts": [turn["bot"]]})
 
-    reply = _chat_call(messages)
+    reply = _chat_call(gemini_history, message)
     history.append({"user": message, "bot": reply})
 
     # Trim history to prevent unbounded memory growth
