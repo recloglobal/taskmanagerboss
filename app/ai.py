@@ -95,7 +95,7 @@ def classify_task(task_text: str) -> dict:
     Returns {
       "category": "work" | "personal" | "health" | "other",
       "short_title": str,
-      "due_hint": "YYYY-MM-DD" | None
+      "due_hint": "YYYY-MM-DD HH:MM" | None
     }
     """
     prompt = f"""
@@ -108,7 +108,7 @@ Task: "{task_text}"
 Return JSON with exactly these keys:
 - "category": one of {CATEGORIES}
 - "short_title": clean 3-7 word title summarizing the task, written in the SAME LANGUAGE as the task (if task is Uzbek → Uzbek, Russian → Russian, English → English)
-- "due_hint": deadline as YYYY-MM-DD string if mentioned, or null if no deadline
+- "due_hint": deadline as YYYY-MM-DD HH:MM string if mentioned, or null if no deadline
 
 Rules:
 - "work" = anything related to job, career, office, business, meetings, projects, coding, clients

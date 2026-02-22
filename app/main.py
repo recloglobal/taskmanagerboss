@@ -49,7 +49,7 @@ def main():
     app.add_handler(CommandHandler("topics", topics_handler))
 
     # Inline button callbacks
-    app.add_handler(CallbackQueryHandler(button_callback_handler, pattern="^(done|notyet):"))
+    app.add_handler(CallbackQueryHandler(button_callback_handler, pattern="^(done|notyet|doing_now):"))
 
     # Group messages (reads #general topic)
     app.add_handler(MessageHandler(

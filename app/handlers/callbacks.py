@@ -54,6 +54,14 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             context.user_data["pending_notyet_task_id"] = task_id
             logger.info(f"Task #{task_id}: awaiting reason from user")
 
+        elif action == "doing_now":
+            from sqlalchemy import func
+            # Give them a temporary grace period on reminders by resetting reminded_at
+            task.reminded_at = func.now()
+            await session.commit()
+            await query.edit_message_text("⏳ Yaxshi, kutaman. Diqqat bilan ishla! 💪")
+            logger.info(f"Task #{task_id} marked as doing_now")
+
 
 async def reason_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles user's text reply after pressing ❌ Not yet."""

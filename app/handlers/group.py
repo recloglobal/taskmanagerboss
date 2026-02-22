@@ -50,9 +50,14 @@ async def group_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     due_at = None
     if due_hint:
         try:
-            due_at = datetime.strptime(due_hint, "%Y-%m-%d")
+            # Try parsing exact time first
+            due_at = datetime.strptime(due_hint, "%Y-%m-%d %H:%M")
         except ValueError:
-            pass
+            try:
+                # Fallback to just the date
+                due_at = datetime.strptime(due_hint, "%Y-%m-%d")
+            except ValueError:
+                pass
 
     # Get destination topic ID
     destination_topic = CATEGORY_TOPIC_MAP.get(category, CATEGORY_TOPIC_MAP["other"])
@@ -84,7 +89,7 @@ async def group_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     category_emoji = {"work": "💼", "personal": "🙋", "health": "💪", "other": "📌"}
     emoji = category_emoji.get(category, "📌")
 
-    due_text = f"\n📅 Muddat: {due_at.strftime('%d.%m.%Y')}" if due_at else ""
+    due_text = f"\n📅 Muddat: {due_at.strftime('%d.%m.%Y %H:%M')}" if due_at else ""
     task_message = (
         f"{emoji} *{short_title}*\n\n"
         f"📝 {task_text}"
@@ -95,7 +100,8 @@ async def group_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Bajarildi", callback_data=f"done:{task_id}"),
-            InlineKeyboardButton("❌ Bajarilmadi", callback_data=f"notyet:{task_id}"),
+            InlineKeyboardButton("❌", callback_data=f"notyet:{task_id}"),
+            InlineKeyboardButton("⏳ Hozir qilyapman", callback_data=f"doing_now:{task_id}"),
         ]
     ])
 

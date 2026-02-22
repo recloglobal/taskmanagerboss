@@ -21,3 +21,7 @@ class Task(Base):
     reminded_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     overdue_count: Mapped[int] = mapped_column(Integer, default=0)
     snooze_reason: Mapped[str] = mapped_column(Text, nullable=True)
+    
+    # Precision reminder tracking tracking
+    reminded_before_due: Mapped[bool] = mapped_column(default=False)
+    deadline_asked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
