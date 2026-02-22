@@ -2,8 +2,12 @@ import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
+from sqlalchemy import select
+
 from config import OWNER_ID
 from ai import chat, clear_history
+from database import SessionLocal
+from models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +31,24 @@ async def private_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     logger.info(f"Private chat from {user_id}: {user_text[:50]}...")
 
+    # DB Context Injection: Fetch active tasks
+    pending_tasks = []
     try:
-        reply = await asyncio.to_thread(chat, user_id, user_text)
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(Task)
+                .where(Task.owner_id == user_id)
+                .where(Task.status == "pending")
+                .order_by(Task.created_at.desc())
+                .limit(5)
+            )
+            tasks = result.scalars().all()
+            pending_tasks = [{"text": t.text, "category": t.category} for t in tasks]
+    except Exception as e:
+        logger.error(f"Failed to fetch tasks for DB context: {e}")
+
+    try:
+        reply = await asyncio.to_thread(chat, user_id, user_text, pending_tasks)
     except Exception as e:
         logger.error(f"AI chat failed: {e}")
         reply = "⚠️ AI bilan bog'lanishda xatolik. Qaytadan urinib ko'ring."
