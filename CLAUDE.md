@@ -55,28 +55,28 @@ app/database.py      ← SQLAlchemy async engine + SessionLocal
 app/models.py        ← Task ORM model
 app/ai.py            ← All AI calls via Gemini: classify_task(), generate_reminder(),
                        generate_done_response(), generate_why_response(), chat(), clear_history()
-app/scheduler.py     ← APScheduler reminder engine (runs every 60 min)
+app/scheduler.py     ← APScheduler reminder engine (runs every 1 min)
 app/handlers/
   start.py           ← /start command (private chat welcome)
   topics.py          ← /topics command (returns thread ID for .env setup)
-  group.py           ← Reads #general, classifies via AI, routes to topic, saves to DB
-  callbacks.py       ← Inline ✅/❌ button handlers + snooze reason collector
-  private.py         ← Private chat AI conversation
+  group.py           ← Reads #general, classifies via AI (YYYY-MM-DD HH:MM), routes to topic, saves to DB
+  callbacks.py       ← Inline ✅/❌/⏳ button handlers + snooze reason collector
+  private.py         ← Private chat AI conversation (with DB Context injection)
 alembic/             ← DB migrations (run inside container only)
 ```
 
 **Request flow (group task):** User posts in `#general` → `group.py` filters by `OWNER_ID` + `TOPIC_GENERAL` → `classify_task()` in `ai.py` → saves `Task` to DB → posts to destination topic with inline buttons.
 
-**Reminder logic:** Scheduler runs every 60 min → queries all `pending` tasks:
-- Tasks **with** due date: remind 1 day before due
+**Reminder logic:** Scheduler runs every 1 min → queries all `pending` tasks:
+- Tasks **with** due date: precision remind 1 hour before and exactly at deadline. 30min overdue penalty.
 - Tasks **without** due date: remind every 48 hours since last reminder
 - `overdue_count` (incremented by scheduler only) drives tone: 0=firm, 1=impatient, 2=sarcastic, 3+=aggressive caps
 
 **AI pattern:** `ai.py` exposes only sync functions. All callers wrap them in `asyncio.to_thread()` to avoid blocking the event loop. `_call()` handles single-turn prompts; `_chat_call()` manages multi-turn chat with `client.chats.create(history=...)`. Fallback: if `gemini-2.0-flash-lite` fails or rate-limits (429), retries once after 35s then falls back to `gemini-2.0-flash`.
 
-**Conversation history** for private chat is stored in `ai.py::_histories` dict (last 20 turns kept, last 10 sent to model as `types.Content` objects) — lost on restart.
+**Conversation history** for private chat is stored in `ai.py::_histories` dict (last 3 turns kept, highly optimized). Database context injection is used to give the AI infinite memory of pending tasks without using huge context limits.
 
-**Snooze flow:** Pressing ❌ sets `context.user_data["pending_notyet_task_id"]` → `reason_message_handler` in `callbacks.py` picks it up (handler group=1, before `private_message_handler` in group=2). `overdue_count` is NOT incremented in `callbacks.py` — only the scheduler does this.
+**Snooze flow:** Pressing ❌ sets `context.user_data["pending_notyet_task_id"]` → `reason_message_handler` in `callbacks.py`. Pressing ⏳ (Doing now) pushes `reminded_at` up for grace periods. `overdue_count` is NOT incremented in `callbacks.py` — only the scheduler does this.
 
 ## Critical Rules
 
@@ -117,7 +117,7 @@ See `.env.example` for all required vars. Key ones:
 - [x] `config.py`, `database.py`, `models.py` written
 - [x] `ai.py` complete (Gemini via `google-genai` SDK, fallback chain, multi-turn chat)
 - [x] All handlers complete (group routing, callbacks, private chat)
-- [x] `scheduler.py` complete (escalating reminders)
-- [ ] Alembic migration not yet generated/applied — run Step 2 above
-- [ ] `TOPIC_GENERAL` in `.env` not yet filled — run Step 3 above
+- [x] `scheduler.py` complete (1m precision interval, accelerating deadlines)
+- [x] Alembic migration generated/applied
+- [x] `TOPIC_GENERAL` in `.env` configured
 - [ ] Deploy to DigitalOcean
