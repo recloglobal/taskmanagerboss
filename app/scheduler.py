@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -44,7 +45,12 @@ async def send_reminders(bot: Bot):
             "overdue_count": task.overdue_count,
         }
 
-        reminder_text = generate_reminder(task_dict)
+        # Async AI call to prevent blocking the event loop
+        try:
+            reminder_text = await asyncio.to_thread(generate_reminder, task_dict)
+        except Exception as e:
+            logger.error(f"AI reminder generation failed for task {task.id}: {e}")
+            reminder_text = f"⏰ Hali bajarilmagan vazifa bor: {task.text}"
 
         keyboard = InlineKeyboardMarkup([
             [
@@ -54,12 +60,16 @@ async def send_reminders(bot: Bot):
         ])
 
         try:
-            await bot.send_message(
-                chat_id=task.group_id,
-                message_thread_id=task.topic_id,
-                text=reminder_text,
-                reply_markup=keyboard,
-            )
+            send_kwargs = {
+                "chat_id": task.group_id,
+                "text": reminder_text,
+                "reply_markup": keyboard,
+            }
+            # Only pass message_thread_id if topics are configured
+            if task.topic_id:
+                send_kwargs["message_thread_id"] = task.topic_id
+
+            await bot.send_message(**send_kwargs)
 
             # Update reminder tracking
             async with SessionLocal() as session:

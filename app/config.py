@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OWNER_ID = int(os.getenv("OWNER_ID"))
 
 POSTGRES_USER = os.getenv("POSTGRES_USER")
@@ -23,11 +23,11 @@ DATABASE_URL_SYNC = (
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
 
-TOPIC_GENERAL = int(os.getenv("TOPIC_GENERAL", 0))
-TOPIC_WORK = int(os.getenv("TOPIC_WORK", 0))
-TOPIC_PERSONAL = int(os.getenv("TOPIC_PERSONAL", 0))
-TOPIC_HEALTH = int(os.getenv("TOPIC_HEALTH", 0))
-TOPIC_OTHER = int(os.getenv("TOPIC_OTHER", 0))
+TOPIC_GENERAL = int(os.getenv("TOPIC_GENERAL") or 0)
+TOPIC_WORK = int(os.getenv("TOPIC_WORK") or 0)
+TOPIC_PERSONAL = int(os.getenv("TOPIC_PERSONAL") or 0)
+TOPIC_HEALTH = int(os.getenv("TOPIC_HEALTH") or 0)
+TOPIC_OTHER = int(os.getenv("TOPIC_OTHER") or 0)
 
 CATEGORY_TOPIC_MAP = {
     "work": TOPIC_WORK,

@@ -1,7 +1,11 @@
+import asyncio
+import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import OWNER_ID
 from ai import chat, clear_history
+
+logger = logging.getLogger(__name__)
 
 
 async def private_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21,5 +25,12 @@ async def private_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await message.reply_text("🔄 Suhbat tarixi tozalandi.")
         return
 
-    reply = chat(user_id, user_text)
+    logger.info(f"Private chat from {user_id}: {user_text[:50]}...")
+
+    try:
+        reply = await asyncio.to_thread(chat, user_id, user_text)
+    except Exception as e:
+        logger.error(f"AI chat failed: {e}")
+        reply = "⚠️ AI bilan bog'lanishda xatolik. Qaytadan urinib ko'ring."
+
     await message.reply_text(reply)

@@ -1,4 +1,5 @@
 import logging
+import traceback
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -23,6 +24,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def error_handler(update: object, context) -> None:
+    """Global error handler — logs all unhandled exceptions."""
+    logger.error("Unhandled exception while processing update:")
+    logger.error(f"  Update: {update}")
+    logger.error(f"  Error: {context.error}")
+    logger.error(traceback.format_exc())
+
+    # Try to notify the user if possible
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Xatolik yuz berdi. Qaytadan urinib ko'ring."
+            )
+        except Exception:
+            pass
+
+
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -35,7 +53,7 @@ def main():
 
     # Group messages (reads #general topic)
     app.add_handler(MessageHandler(
-        filters.Chat(chat_type=["group", "supergroup"]) & filters.TEXT & ~filters.COMMAND,
+        (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) & filters.TEXT & ~filters.COMMAND,
         group_message_handler
     ))
 
@@ -50,6 +68,9 @@ def main():
         filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
         private_message_handler,
     ), group=2)
+
+    # Global error handler
+    app.add_error_handler(error_handler)
 
     # Start scheduler
     start_scheduler(app.bot)
